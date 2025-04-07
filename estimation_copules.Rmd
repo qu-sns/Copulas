@@ -1,0 +1,1180 @@
+---
+title: "Estimation de Copules"
+output:
+  html_document:
+    number_sections: yes
+    toc: yes
+  pdf_document:
+    toc: yes
+    includes:
+      in_header: header.tex
+---
+
+<!-- CSS intégré pour la mise en page -->
+<style>
+/* Centrer le titre */
+h1.title {
+  text-align: center;
+  font-size: 2.5em;
+  font-weight: bold;
+  margin-top: 4em;
+}
+
+/* Style pour l'auteur, l'affiliation, et la date en haut à droite */
+.header-right {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  text-align: right;
+  font-size: 1.2em;
+  font-style: normal;
+}
+
+/* Table des matières */
+.toc {
+  margin-top: 1em;
+}
+</style>
+
+<!-- HTML pour afficher le nom, l'affiliation et la date en haut à droite -->
+<div class="header-right">
+  <p>SENES BOURRIE Quentin</p>
+  <p>ISFA</p>
+  <p>2025</p>
+</div>
+
+
+# Introduction
+
+<br>
+
+Dans ce notebook, l'ensemble des codes qui m'ont permis de mener mon étude seront présentés.
+
+La présentation des données a été faite via Python et détaillée dans le notebook ci-joint.
+
+L'utilisation de R était essentielle pour ce projet, notamment grâce aux différentes bibliothèques comme copula, lcopula ou encore VineCopula.
+
+<br>
+
+# Importation des données et des librairies
+
+```{r, message=FALSE, warning=FALSE}
+# librairies
+library(readr)
+library(dplyr)
+library(lubridate)
+library(copula)
+library(lcopula)
+library(plotly)
+library(VineCopula)
+library(MASS)
+library(knitr)
+library(kableExtra)
+library(fitdistrplus)
+
+
+# Données
+# Chemins
+chemin_airbus <- "/Users/quentinsenes/Desktop/data_airbus.txt"
+chemin_safran <- "/Users/quentinsenes/Desktop/data_safran.txt"
+
+# Chargement des données
+df_airbus <- read.delim(chemin_airbus, sep = "\t")
+df_safran <- read.delim(chemin_safran, sep = "\t")
+
+# Trie des colonnes
+df_airbus <- df_airbus[, c("date", "clot")]
+df_safran <- df_safran[, c("date", "clot")]
+
+# Convertion objet date
+df_airbus$date <- as.Date(df_airbus$date, format = "%d/%m/%Y")
+df_safran$date <- as.Date(df_safran$date, format = "%d/%m/%Y")
+
+# Slicing, on garde juste la période covid
+target_date_1 <- as.Date("2019-12-31")
+target_date_2 <- as.Date("2020-12-31")
+
+if (!(target_date_1 %in% df_airbus$date)) {
+  target_date_1 <- max(df_airbus$date[df_airbus$date <= target_date_1])
+}
+
+if (!(target_date_2 %in% df_airbus$date)) {
+  target_date_2 <- max(df_airbus$date[df_airbus$date <= target_date_2])
+}
+
+# On garde juste la période covid (Slicing)
+indice_1 <- which(df_airbus$date == target_date_1)
+indice_2 <- which(df_airbus$date == target_date_2)
+df_airbus <- df_airbus[indice_1:indice_2, ]
+df_safran <- df_safran[indice_1:indice_2, ]
+
+# Calculs rendements logarithmiques
+log_returns_airbus <- diff(log(df_airbus$clot))
+log_returns_safran <- diff(log(df_safran$clot))
+
+# Valeurs aberrantes (outlier)
+log_returns_airbus <- na.omit(log_returns_airbus)
+log_returns_safran <- na.omit(log_returns_safran)
+```
+
+<br>
+
+# Détection de la dépendance
+## K-Plot
+
+<br>
+
+**Remarque :** La dépendance a déjà été en partie étudié avec python (voir diagramme dispertion, Khi-plot et interprétations). Pour poursuivre mon étude, j'ai également décidé d'étudier les K-plot de mes données.
+
+<br>
+
+```{r, message=FALSE, warning=FALSE}
+# Le package ici utilisé est lcopula, la fonction est K-plot
+
+# On crée une matrice de nos données 
+log_returns <- cbind(log_returns_airbus, log_returns_safran)
+
+# Calcul du k-plot avec la fonction
+K.plot(log_returns, xlab = "", ylab = "")
+
+# Trace la fonction identité qui représente une structure indépendante
+abline(a = 0, b = 1, col = "black", lty = 1, lwd = 2)
+
+# Légende, bornes de Fréchet
+legend("topleft", 
+       legend = c("Structure indépendante", "Bornes de Fréchet-Hoeffding"), 
+       lty = c(1, 2), 
+       col = c("black", "black"), 
+       lwd = c(2, 1),
+       bty = "n")
+```
+
+<br>
+
+# Estimations empiriques
+
+## Fonctions de répartitions empiriques
+
+Voir code python
+
+## Rank Rank plot (normalisé)
+
+```{r, message=FALSE, warning=FALSE}
+# Calcul des rangs des pseudo-observations normalisé
+# On peut également appliquer la fonction pobs 
+rank_u <- rank(log_returns_airbus)/length(log_returns_airbus)
+rank_v <- rank(log_returns_safran)/length(log_returns_safran)
+
+# Graphe 2D
+plot_2d <- plot_ly(x = rank_u, y = rank_v, type = 'scatter', mode = 'markers',
+                   marker = list(size = 5, color = 'navy')) %>%
+  layout(
+    title = list(
+      text = "Rank Rank Plot 2D",  
+      x = 0.5,  
+      xanchor = "center", 
+      font = list(size = 24)  
+    ),
+    xaxis = list(title = "Rank U (Airbus)"),
+    yaxis = list(title = "Rank V (Safran)"),
+    margin = list(t = 100)
+  )
+
+# Affichage du graphique 2D
+plot_2d
+```
+
+```{r, message=FALSE, warning=FALSE}
+# Densité 2D pour le graphe 3D
+dens <- kde2d(rank_u, rank_v, n = 50)  
+
+# Palette de couleurs
+colorscale <- colorRamp(c("navy", "lightblue"))
+
+# Graphe 3D
+plot_3d <- plot_ly(x = dens$x, y = dens$y, z = dens$z, type = 'surface', 
+                   colorscale = list(c(0, 1), c("navy", "lightblue")), opacity = 0.8,
+                   showscale = FALSE) %>%
+  
+  layout(
+    title = list(
+      text = "Rank Rank Plot 3D", 
+      x = 0.5,  
+      xanchor = "center",  
+      font = list(size = 24)  
+    ),
+    xaxis = list(title = "Rank U (Airbus)"),
+    yaxis = list(title = "Rank V (Safran)"),
+    zaxis = list(title = "Densité"),
+    margin = list(t = 100)  
+  )
+
+plot_3d
+```
+
+<br>
+
+## Densité empirique, Kernel density estimation : méthode des noyaux
+
+<br>
+
+Je décide de déterminer ma densité empirique avec un noyau gaussien. 
+
+La forme paramétrique de la densité jointe empirique à noyau gaussien d’un vecteur de variables aléatoires \( X = (X_1, X_2) \) estimée sur un historique \((x_1^t, x_2^t)\) de taille \( T \) est donnée par la formule suivante :
+
+\[
+\hat{f}(x) = \frac{1}{T h^2} \sum_{t=1}^{T} K\left(\frac{1}{h} (x - x^t)\right)
+\]
+
+avec pour tout \( z \in \mathbb{R}^2 \), 
+
+\[
+K(z) = (2\pi)^{-1} \exp\left(-\frac{1}{2} z'z \right)
+\]
+
+Le paramètre \( h \) représente le praramètre de lissage (largeur bande) qui caractérise la densité. On peut l’estimer par le maximum de vraisemblance. 
+
+L'estimation de \( h \) est très importante, si \( h \) est trop petit, notre densité sera bruité mais si le paramètre est trop grand, notre densité va perdre sa qualité d'ajustement.
+
+<br>
+
+Etant donné que nous sommes en deux dimensions, je décide d'utiliser la fonction **MASS::kde2d** de la librairie **MASS** pour l'évaluation de ma densité.
+
+
+<br>
+
+**Graphe densité multivariée :**
+```{r, message=FALSE, warning=FALSE}
+# Densité empirique
+emp_density <- MASS::kde2d(log_returns_airbus, log_returns_safran, n = 200)
+
+# Graphique empirique 
+fig_emp <- plot_ly(
+  x = emp_density$x, y = emp_density$y, z = emp_density$z,
+  type = "surface",
+  colorscale = list(
+  list(0, "#c6dbef"),  
+  list(1, "#08306B")  
+  ),    
+  opacity = 0.9,          
+  showscale = TRUE,         
+  contours = list(        
+    z = list(
+      show = TRUE,
+      usecolormap = TRUE,
+      project = list(z = TRUE)
+    )
+  ),
+  name = "Densité empirique"
+) %>%
+  layout(
+    title = list(text = 'Densité empirique', x = 0.5, y = 0.95),  
+    margin = list(t = 100),
+    scene = list(
+      xaxis = list(title = 'AIR'),
+      yaxis = list(title = 'SAF'),
+      zaxis = list(title = 'Densité')
+    )
+  )
+
+# Affichage
+fig_emp
+```
+
+
+<br>
+
+## Estimation densité empirique copule
+
+<br>
+
+Selon le théorème de Sklar, elle peut être exprimée à l'aide d'une copule \( C \) :
+
+\[
+F(x_1, x_2) = C(F_1(x_1), F_2(x_2))
+\]
+
+où \( F_1(x_1) \) et \( F_2(x_2) \) sont les fonctions de répartition marginales de \( X_1 \) et \( X_2 \).
+
+En remplaçant \( x_1 = F_1^{-1}(u) \) et \( x_2 = F_2^{-1}(v) \), on obtient :
+
+\[
+C(u, v) = F(F_1^{-1}(u), F_2^{-1}(v))
+\]
+
+Pour passer de la fonction de répartition d'une copule \( C(u, v) = F(F_1^{-1}(u), F_2^{-1}(v)) \) à la densité de copule \( c(u, v) \), on dérive l'expression par rapport à \( u \) et \( v \).
+
+\[
+c(u, v) = \frac{\partial^2 C(u, v)}{\partial u \partial v} = \frac{f(F_1^{-1}(u), F_2^{-1}(v))}{f_1(F_1^{-1}(u)) f_2(F_2^{-1}(v))}
+\]
+
+On peut donc construire l'estimateur :
+
+\[
+\hat{c}(u, v) = \frac{\hat{f}(\hat{F}_1^{-1}(u), \hat{F}_2^{-1}(v))}{\hat{f}_1(\hat{F}_1^{-1}(u)) \cdot \hat{f}_2(\hat{F}_2^{-1}(v))}
+\]
+
+```{r, message=FALSE, warning=FALSE}
+# Quantiles à estimer pour remplir grille
+quantiles <- seq(0, 1, length.out = 1000)
+
+# Fonction de répartition inversée pour Airbus
+F_1_inv <- approxfun(quantiles, quantile(log_returns_airbus, probs = quantiles))
+
+# Fonction de répartition inversée pour Safran
+F_2_inv <- approxfun(quantiles, quantile(log_returns_safran, probs = quantiles))
+
+# Estimation des densités marginales
+density_airbus <- density(log_returns_airbus)
+f_1 <- approxfun(density_airbus$x, density_airbus$y)
+
+density_safran <- density(log_returns_safran)
+f_2 <- approxfun(density_safran$x, density_safran$y)
+
+F <- ecdf(log_returns_airbus)  # Fonction de répartition empirique pour Airbus
+G <- ecdf(log_returns_safran)  # Fonction de répartition empirique pour Safran
+
+u_vals <- F(log_returns_airbus)  # Calcul de u_i = F(x_i)
+v_vals <- G(log_returns_safran)  # Calcul de v_i = G(y_i)
+
+# Densité empirique conjointe / méthode des noyaux
+emp_density <- MASS::kde2d(u_vals, v_vals, n = 50)
+
+# Grille vide
+copule_density <- matrix(0, nrow = length(emp_density$x), ncol = length(emp_density$y))
+
+for (i in 1:length(emp_density$x)) {
+  for (j in 1:length(emp_density$y)) {
+    u_val <- emp_density$x[i]
+    v_val <- emp_density$y[j]
+    
+    # Inversion des fonctions de répartitions
+    inv_x <- F_1_inv(u_val)
+    inv_y <- F_2_inv(v_val)
+    
+    # Composition formule
+    numerator <- emp_density$z[i, j]
+    denominator <- f_1(inv_x) * f_2(inv_y)
+    
+    # Applicatrion formule
+    copule_density[i, j] <- numerator / denominator
+  }
+}
+
+# Visualisation
+fig_copule <- plot_ly(
+  x = emp_density$x, y = emp_density$y, z = copule_density,
+  type = "surface",
+  colorscale = list(
+  list(0, "#08306B"),  
+  list(1, "#c6dbef")  
+  ), 
+  opacity = 0.9,            
+  cmin = 0,               
+  cmax = 2,              
+  showscale = FALSE,
+  name = "Densité empirique Copule"
+)%>%
+  layout(
+    title = list(text = 'Copule empirique', x = 0.5, y = 0.95),
+    margin = list(t = 100),
+    scene = list(
+      xaxis = list(title = 'U (AIR)', range = c(0, 1)),
+      yaxis = list(title = 'V (SAF)', range = c(0, 1)),
+      zaxis = list(title = 'Densité de la copule', range = c(0, 10))
+    )
+  )
+
+# Affichage 
+fig_copule
+```
+**Contour plot :**
+
+```{r, message=FALSE, warning=FALSE}
+# Contour plot
+fig_contour <- plot_ly(
+  x = emp_density$x,
+  y = emp_density$y,
+  z = copule_density,
+  type = "contour",
+  colorscale = list(
+  list(0, "#08306B"),  
+  list(1, "#c6dbef")  
+  ), 
+  opacity = 0.9,            
+  zmin = 0,   
+  zmax = 3,   
+  contours = list(
+    coloring = "heatmap"
+  ),
+  name = "Contour de la densité empirique"
+) %>%
+  layout(
+    title = list(text = 'Contour de la Densité Empirique', x = 0.5, y = 0.95),
+    margin = list(t = 150),
+    xaxis = list(title = 'U (AIR)', range = c(0, 1)),
+    yaxis = list(title = 'V (SAF)', range = c(0, 1))
+  )
+
+# Affichage
+fig_contour
+```
+
+<br>
+
+**Vérification avec la librairie kdecopula :**
+
+<br>
+
+Etant donné que l'on a effectué beaucoup d'opérations manuelles (inversions de fonctions...), il est pertinent d'effectuer la même opération avec une librairie scpécialisée dans l'estimation de densité empirique de copule.
+
+<br>
+
+```{r, message=FALSE, warning=FALSE}
+library(kdecopula)
+# Data
+Data <- cbind(log_returns_airbus, log_returns_safran)
+
+# Pseudo-observations
+pseudo_data <- pobs(Data)
+
+# Estimation de la densité
+kde_fit <- kdecop(pseudo_data)
+
+# Résumé des résultats de l'estimation
+summary(kde_fit)
+
+# Création d'une grille pour évaluer la densité
+grid_size <- 50
+u_grid <- seq(0, 1, length.out = grid_size)
+v_grid <- seq(0, 1, length.out = grid_size)
+grid_points <- expand.grid(u_grid, v_grid)
+
+# Conversion
+grid_points <- as.matrix(grid_points)
+
+# Densité sur la grille
+z_values <- predict(kde_fit, newdata = grid_points)
+z_matrix <- matrix(z_values, nrow = grid_size, ncol = grid_size)
+
+# Copule empirique
+fig_copule <- plot_ly(
+  x = u_grid, y = v_grid, z = z_matrix,
+  type = "surface",
+  colorscale = list(
+    list(0, "#08306B"),  
+    list(1, "#c6dbef")  
+  ),
+  opacity = 0.9, 
+  cmin = 0,  
+  cmax = 3, 
+  showscale = FALSE, 
+  name = "Densité empirique Copule"
+) %>%
+  layout(
+    title = list(text = 'Copule empirique', x = 0.5, y = 0.95),
+    margin = list(t = 100),
+    scene = list(
+      xaxis = list(title = 'U (AIR)', range = c(0, 1)),
+      yaxis = list(title = 'V (SAF)', range = c(0, 1)),
+      zaxis = list(title = 'Densité de la copule', range = c(0, 10))
+    )
+  )
+
+# Affichage du graphique
+fig_copule
+```
+
+<br>
+
+```{r, message=FALSE, warning=FALSE}
+# Création d'un contour plot pour la densité de la copule
+fig_contour <- plot_ly(
+  x = u_grid,
+  y = v_grid,
+  z = z_matrix,
+  type = "contour",
+  colorscale = list(
+    list(0, "#08306B"), 
+    list(1, "#c6dbef")  
+  ), 
+  opacity = 0.9,            
+  zmin = 0,   
+  zmax = 3,   
+  contours = list(
+    coloring = "heatmap"
+  ),
+  name = "Contour de la densité empirique"
+) %>%
+  layout(
+    title = list(text = 'Contour de la Densité Empirique', x = 0.5, y = 0.95),
+    margin = list(t = 150),
+    xaxis = list(title = 'U (AIR)', range = c(0, 1)),
+    yaxis = list(title = 'V (SAF)', range = c(0, 1))
+  )
+
+# Affichage du graphique
+fig_contour
+```
+
+<br>
+
+**Remarque :** Ce graphe fait beaucoup plus sens que le précédent, c'est celui que l'on va retenir.
+
+<br>
+
+## Copule, Fonction de répartition empirique
+
+**Définition mathématique de la copule empirique :**
+
+$$
+C_K\left(\frac{k_1}{K}, \dots, \frac{k_n}{K}\right) = \frac{1}{K} \sum_{k=1}^{K} 1 \left\{ x_1^{(k_1)} \leq x_1^{k}, \dots, x_n^{(k_n)} \leq x_n^{k} \right\}
+$$
+
+<br>
+
+Etant donné que la copule est invariante par toute transformation croissante des marginales, il est plus facile de l'exprimer informatiquement en fonction du rang des observations :
+
+Voici l'expression de la copule empirique :
+
+<br>
+
+$$
+C_K\left(\frac{k_1}{K}, \dots, \frac{k_n}{K}\right) = \frac{1}{K} \sum_{k=1}^{K} 1\left\{r_1^k \leq k_1, \dots, r_n^k \leq k_n \right\}
+$$
+
+<br>
+
+```{r, message=FALSE, warning=FALSE}
+# On transforme les observations en pseudo-observations (dans l'intervalle [0,1])
+# Equivalent à la manipulation précédente (rangs normalisés)
+u <- pobs(log_returns_airbus)
+v <- pobs(log_returns_safran)
+
+# Construction de la copule empirique
+emp_cop <- empCopula(cbind(u, v))
+
+# Affichage
+# On crée un grille de points pour le graphe
+n <- 100  # Résolution de la grille
+grid_u <- seq(0, 1, length.out = n)
+grid_v <- seq(0, 1, length.out = n)
+grid <- expand.grid(grid_u, grid_v)
+
+# Defintion de la fonction copule
+empirical_copula <- function(u, v, data) {
+  mean(data[, 1] <= u & data[, 2] <= v)
+}
+
+# On applique la fonction posée sur notre grille
+z <- matrix(NA, nrow = n, ncol = n)
+for (i in 1:n) {
+  for (j in 1:n) {
+    z[i, j] <- empirical_copula(grid_u[i], grid_v[j], cbind(u, v))
+  }
+}
+
+
+# Graphe
+fig_3d <- plot_ly(
+  x = grid_u, y = grid_v, z = z,
+  type = "surface", 
+  colorscale = 'Reds', 
+  opacity = 0.85,  
+  showscale = FALSE   
+) %>%
+layout(
+    title = list(
+      text = "Copule empirique", 
+      x = 0.5, 
+      xanchor = "center", 
+      font = list(size = 24) 
+    ),
+    scene = list(
+      xaxis = list(title = list(text = "AIR", font = list(family = "Times New Roman", size = 10))), 
+      yaxis = list(title = list(text = "SAF", font = list(family = "Times New Roman", size = 10))),
+      zaxis = list(title = list(text = "C(AIR, SAF)", font = list(family = "Times New Roman", size = 10))) 
+    ),
+    margin = list(t = 100)  
+  )
+
+
+# Affichage
+fig_3d
+```
+
+<br>
+
+## Autre méthode : Copule, Fonction de répartition empirique
+
+<br>
+
+Étant donné que la formule ci-dessus utilisant les rangs n'est pas forcément très intuitive, nous pouvons également vérifier notre graphe en repartant de la définition théorique de notre copule :
+
+<br>
+
+\[
+C(u, v) = F(F_1^{-1}(u), F_2^{-1}(v))
+\]
+
+<br>
+
+Chaque fonction de répartition peut facilement être estimée de façon empirique, ce qui donne le résultat suivant.
+
+```{r, message=FALSE, warning=FALSE}
+# Fonctions de répartition marginales
+F_empirical_airbus <- ecdf(log_returns_airbus)
+G_empirical_safran <- ecdf(log_returns_safran)
+
+u_vals <- F_empirical_airbus(log_returns_airbus)  # u_i = F(x_i)
+v_vals <- G_empirical_safran(log_returns_safran)  # v_i = G(y_i)
+
+# Fonction de répartition empirique
+C_empirical <- function(u, v) {
+  mean((u_vals <= u) & (v_vals <= v))
+}
+
+# Copule empirique sur une grille
+u_grid <- seq(0, 1, length.out = 50)
+v_grid <- seq(0, 1, length.out = 50)
+C_grid <- outer(u_grid, v_grid, Vectorize(C_empirical))
+
+# Visualisation
+fig_copule <- plot_ly(
+  x = u_grid, y = v_grid, z = C_grid,
+  type = "surface",
+  opacity = 0.8,
+  colorscale = list(
+  list(0, "#08306B"),  
+  list(1, "#c6dbef")  
+  )
+) %>%
+  layout(
+    title = "Copule Empirique",
+    scene = list(
+      xaxis = list(title = "U (AIR)"),
+      yaxis = list(title = "V (SAF)"),
+      zaxis = list(title = "C(u, v)")
+    )
+  )
+
+# Affichage 
+fig_copule
+```
+
+
+# Recherche copule théorique
+
+<br>
+
+Ajuster nos données à une copule connue est très important dans mon projet. Premièrement, il est difficile de générer des observations à partir de ma copule empirique, car elle est discrète et non continue, elle est uniquement générée sur la marche $\left\{0,\frac{1}{K},\dots,\frac{K-1}{K}\right\}$. ($K = 100$ dans mon code)
+
+<br>
+
+L'utilisation de copules connues permet de faire une généralisation et grandement faciliter les différentes simulations.
+
+Deuxièmement, connaître la structure à laquelle se rattachent mes données apporte beaucoup d'interprétabilité à mon raisonnement. (grâce aux propriétés des copules étudiées en cour)
+
+<br>
+
+## Sélection des copules à étudier : gofCopula
+
+<br>
+
+La librairie gofCopule (Goodness-of-fit tests), basée sur le processus empirique, compare la copule empirique avec une estimation paramétrique de la copule dérivée sous l'hypothèse nulle. 
+
+La statistique de test est le Cramer-von Mises functional \(S_n\) défini par :  (C.f. Genest, Remillard et Beaudoin (2009), p 201) (se rapproche beaucoup d'une norme $L^2$)
+
+$$
+S_n = \int_{[0,1]^d} \left(C_n(\mathbf{u}) - C_{\theta_n}(\mathbf{u})\right)^2 \, dC_n(\mathbf{u})
+$$
+
+et sert à tester l'hypothèse : $H_0 : C = C_{\theta_n}$
+
+
+Des p-values pour l'hypothèse de test $H_0$ peuvent être obtenues soit en utilisant le bootstrap paramétrique, soit à l'aide d'une approche rapide par multiplicateur.
+
+```{r, message=FALSE, warning=FALSE}
+library(gofCopula)
+
+# Pseudo-observations
+Data <- cbind(log_returns_airbus, log_returns_safran)
+pseudo_data <- pobs(Data)
+
+# Initialisation liste résultats
+gof_results <- list()
+
+# 1. Copule Gaussienne
+cop_gau <- ellipCopula(family = "normal", dim = 2)
+fit_gau <- fitCopula(cop_gau, pseudo_data, method = "itau")
+gof_results$gaussian <- gofCopula(fit_gau@copula, pseudo_data, simulation = "mult", estim.method = "itau")
+
+# 2. t-Copule
+cop_t <- ellipCopula(family = "t", dim = 2)
+fit_t <- fitCopula(cop_t, pseudo_data, method = "itau")
+gof_results$t_copula <- gofCopula(fit_t@copula, pseudo_data, simulation = "mult", estim.method = "itau")
+
+# 3. Copule de Clayton
+cop_clayton <- archmCopula(family = "clayton", dim = 2)
+fit_clayton <- fitCopula(cop_clayton, pseudo_data, method = "itau")
+gof_results$clayton <- gofCopula(fit_clayton@copula, pseudo_data, simulation = "mult", estim.method = "itau")
+
+# 4. Copule de Gumbel
+cop_gumbel <- archmCopula(family = "gumbel", dim = 2)
+fit_gumbel <- fitCopula(cop_gumbel, pseudo_data, method = "itau")
+gof_results$gumbel <- gofCopula(fit_gumbel@copula, pseudo_data, simulation = "mult", estim.method = "itau")
+
+# 5. Copule de Frank
+cop_frank <- archmCopula(family = "frank", dim = 2)
+fit_frank <- fitCopula(cop_frank, pseudo_data, method = "itau")
+gof_results$frank <- gofCopula(fit_frank@copula, pseudo_data, simulation = "mult", estim.method = "itau")
+
+# Extraction des statistiques de test et p-values
+results_df <- data.frame(
+  Copule = character(),
+  Statistic = numeric(),
+  P_value = numeric(),
+  stringsAsFactors = FALSE
+)
+
+for (copula_type in names(gof_results)) {
+  result <- gof_results[[copula_type]]
+  results_df <- rbind(results_df, data.frame(
+    Copule = copula_type,
+    Statistic = result$statistic,
+    P_value = result$p.value
+  ))
+}
+
+# Affichage du tableau
+kable(results_df, format = "html", table.attr = "style='width:50%;'") %>%
+  kable_styling(position = "center", full_width = FALSE, bootstrap_options = c("striped", "hover", "condensed"))
+```
+
+<br>
+
+**Conclusion :** On retient uniquement la copule de student car c'est la seule qui rejette pas l'hypothèse $H_0$, ce qui est également cohérent avec la valeur de la statistique car c'est la plus faible.
+Ce résultat est peu surprenant : la copule de Student est bien adaptée aux dépendances des valeurs extrêmes. Elle possède également un paramètre contrôlant les queues de distribution, ce qui permet plus de flexibilité dans la modélisation de la dépendance.
+
+
+## Calibrage des copules paramétriques
+
+<br>
+
+Pour réaliser ces calibrages, on ajuste chaque modèle théorique de copule avec nos estimations empiriques par maximum de vraisemblance.
+
+<br>
+
+### Copule Student
+
+<br>
+
+Rappelons que la fonction de densité de la copule de Student \(d\)-variée, s’écrit pour tout \((u_1, \dots, u_d) \in [0,1]^d\) :
+
+\[
+c(u_1, \dots, u_d) = \frac{f_{\nu, \Sigma} \left( t_{\nu}^{-1}(u_1), \dots, t_{\nu}^{-1}(u_d) \right)}{\prod_{i=1}^{d} f_{\nu} \left( t_{\nu}^{-1}(u_i) \right)}
+\]
+
+La fonction de distribution \(t_{\nu}^{-1}\) est l’inverse de la distribution de Student centrée réduite univariée à \(\nu\) degrés de liberté. La fonction \(f_{\nu, \Sigma}\) est la densité de probabilité de la loi de Student centrée réduite, \(\Sigma\) sa matrice de corrélation, et \(f_{\nu}\) est la densité univariée de la loi de Student centrée réduite (\(\Sigma = 1\)). 
+
+
+<br>
+
+```{r, message=FALSE, warning=FALSE}
+Data <- cbind(log_returns_airbus, log_returns_safran)
+
+# Pseudo-observations
+pseudo_data <- pobs(Data)
+
+# Ajustement 
+copula_student <- tCopula(dim = 2)
+fit_student <- fitCopula(copula_student, pseudo_data, method = "ml")
+
+# Récupération des paramètres estimés
+fitted_copula <- fit_student@copula
+
+# Grille
+grid_size <- 50
+u_grid <- seq(0, 1, length.out = grid_size)
+v_grid <- seq(0, 1, length.out = grid_size)
+grid_points <- as.matrix(expand.grid(u_grid, v_grid))  # Conversion en matrice
+
+# Calcul de la densité sur la grille
+z_values <- dCopula(grid_points, fitted_copula)
+z_matrix <- matrix(z_values, nrow = grid_size, ncol = grid_size)
+
+# Visualisation 
+fig_copule_student <- plot_ly(
+  x = u_grid, y = v_grid, z = z_matrix,
+  type = "surface",
+  colorscale = list(
+    list(0, "#08306B"), 
+    list(1, "#c6dbef")  
+  ),
+  opacity = 0.9, 
+  zmin = 0,      
+  zmax = 8,     
+  showscale = TRUE 
+) %>%
+  layout(
+    title = list(text = 'Densité de la Copule de Student Estimée', x = 0.5, y = 0.95),
+    scene = list(
+      xaxis = list(title = 'U (AIR)', range = c(0, 1)),
+      yaxis = list(title = 'V (SAF)', range = c(0, 1)),
+      zaxis = list(title = 'Densité de la Copule', range = c(0, 15))  
+    )
+  )
+
+# Affichage 
+fig_copule_student
+```
+**Remarque :** Graphe très très proche de la densité du copule empirique.
+
+<br>
+
+### Fonction Bicopselec
+
+<br>
+
+Pour estimer la copule optimale ainsi que ses paramètres associés, je décide d'utiliser la fonction **Bicopselec** de la librairie VineCopula.
+Cette fonction propose un large choix de famille, également un large choix de méthodes d'estimation.
+
+<br>
+
+**Les méthodes d'estimaions :**
+
+<br>
+- La méthode d'estimation classique de maximum de vraisemblance appelée Loglik.
+- Etant donné que chaque copule théorique ne possède pas le même nombre de paramètres d'ajustement, on peut également intégrer le nombre de paramètre d'ajustement avec le critère **AIC (Critère d'information d'Akaike)**.
+- Etant donné que la taille de mon échantillon est relativement faible, c'est un cirtère que l'on peut également prendre en compte dans notre estimation avec le critère **BIC (Critère d'information bayésien)**.
+
+<br>
+
+
+```{r, message=FALSE, warning=FALSE}
+# Rang normalisé
+u <- pobs(log_returns_airbus)
+v <- pobs(log_returns_safran)
+
+# Liste des résultats
+results <- list()
+
+# Critères de sélection : logLik, AIC, BIC
+selection_criteria <- c("logLik", "AIC", "BIC")
+
+# Sélection avec chaque critère
+for (crit in selection_criteria) {
+  result <- BiCopSelect(
+    u,
+    v,
+    familyset = NA,
+    selectioncrit = crit,
+    indeptest = FALSE,
+    level = 0.05,
+    weights = NA,
+    rotations = TRUE,
+    se = FALSE,
+    presel = TRUE,
+    method = "mle"
+  )
+  
+  # Information output
+  copule_info <- paste(result$familyname, 
+                       "(par = ", round(result$par, 2), 
+                       if(!is.null(result$par2)) paste(", par2 = ", round(result$par2, 2)) else "",
+                       ", tau = ", round(result$tau, 2), ")", sep = "")
+  
+  results[[crit]] <- copule_info
+}
+
+# Data frame
+results_df <- data.frame(Copule_Info = unlist(results))
+
+# Affichage
+kable(results_df, format = "html", table.attr = "style='width:50%;'") %>%
+  kable_styling(position = "center", full_width = FALSE)
+```
+<br>
+
+**Remarque :** La copule BB7 est une copule de la famille archimédienne, générée à partir des copules de Clayton et Gumbel, qui capte les dépendances dans les queues de distribution grâce à sa forme. La particularité de la BB7 réside dans l'asymétrie qu'elle présente dans ses queues. Cette asymétrie correspond parfaitement à mon exemple, car les actifs sont fortement corrélés en cas de crise (valeurs extrêmes négatives), mais pas nécessairement pour les valeurs extrêmes positives.
+
+<br>
+
+**Conclusion ** : Etant donné qu'il est difficile d'obtenir beaucoup d'informations sur la copule hybride BB7, je décide de retenir la copule de student pour la suite du projet.
+
+<br>
+
+# Application rainbow option (option arc en ciel) : Pricing option rainbow par Monte-Carlo
+
+<br>
+
+Une option rainbow est un instrument financier exposé à au moins deux sources d'incertitude provenant de différents actifs sous-jacents, et sa valeur dépend également du prix de ces actifs risqués.
+
+<br>
+
+**Présentation de l'option étudiée :**<br>
+
+| Symbole | Signification |
+|-------------|-------------------|
+| \(S_{it}\)  | Prix au comptant de l'action \(i\), \(i = 1, 2, \cdots, n\) |
+| \(X_t\)     | Prix au comptant de l'obligation |
+| \(K_i\)     | Prix d'exercice de l'option rainbow / strike \(i\), \(i = 1, 2, \cdots, n\) |
+| \(\tau\)    | Date d'expiration de l'option |
+| \(r\)       | Taux d'intérêt sans risque |
+| \(F_t\)       | Filtration associée à l'ensemble des actifs du marché |
+
+<br>
+
+Etant donné que l'on se concentre sur les valeurs extrèmes négatives, je décide de choisir l'étude d'un put min rainbow, défini par le payoff suivant :<br>
+
+
+$$ Payoff = min_{i\in [1,n]\cap\mathbb{N}}[(K_1 - S_{1 \tau})_{+}; \cdots; (K_n - S_{n \tau})_{+}]$$
+<br>
+
+Pour que cette option se ramène à mon exemple, je choisis de poser $n = 2$. De plus, étant donné que j'ai choisi des actifs ayant des cours relativement proches, je peux également faire la simplification $K_1 = K_2 = K$.
+
+<br>
+
+On obtient alors : $Payoff = min[(K - S_{1 \tau})_{+}; (K - S_{2 \tau})_{+}] = [K - max(S_{1 \tau}, S_{2 \tau})]_{+}$
+
+<br>
+
+On peut donc exprimer le prix de l'option à $t$ comme :
+
+<br>
+
+$$X_t = e^{(-r(\tau - t))}\mathbb{E}[[K - max(S_{1 \tau}, S_{2 \tau})]_{+}|F_t]$$
+
+<br>
+
+On va donc générer les trajectoires aléatoire du processus $Y_t = [K - max(S_{1 t}, S_{2 t})]_{+}$ de façon traditionnelle (loi normale multivariée) ainsi qu'avec le copule construit dans la partie précédente afin de comparer les résultats.
+
+On pose également $K = 100$.
+
+<br>
+
+## Loi normale multivariée
+
+Etant donné que ce n'est pas l'objet du sujet je ne rentrerai pas dans les détails mathématiques de cette partie. L'intégration de la corrélation de pearson se fait par décomposition de Cholesky.
+
+<br>
+
+```{r, message=FALSE, warning=FALSE}
+# Définition du strike
+K <- 100
+
+# Matrice des rendements
+log_returns_matrix <- cbind(log_returns_airbus, log_returns_safran)
+
+# Matrice de corrélation
+correlation_matrix <- cor(log_returns_matrix)
+
+# Décomposition de Cholesky
+cholesky_matrix <- chol(correlation_matrix)
+
+# Caractéristiques des lois normales indépendantes
+mean_airbus <- mean(log_returns_airbus)
+sd_airbus <- sd(log_returns_airbus)
+
+mean_safran <- mean(log_returns_safran)
+sd_safran <- sd(log_returns_safran)
+
+# Initialisation des prix de départ
+initial_price_airbus <- tail(df_airbus$clot, 1)
+initial_price_safran <- tail(df_safran$clot, 1)
+
+# Fonction de simulation Monte Carlo
+monte_carlo_normal <- function(n) {
+  # Liste pour stocker les prix des options
+  liste_prix <- numeric(n)
+  
+  # Boucle pour chaque simulation
+  for (k in 1:n) {
+    
+    # 126 jours de simulation (6 mois)
+    independent_returns_airbus <- rnorm(126, mean = mean_airbus, sd = sd_airbus)
+    independent_returns_safran <- rnorm(126, mean = mean_safran, sd = sd_safran)
+    
+    independent_returns <- cbind(independent_returns_airbus, independent_returns_safran)
+    
+    # Ajout de la dépendance via la matrice de Cholesky
+    new_correlated_returns <- t(cholesky_matrix %*% t(independent_returns))
+    
+    new_log_returns_airbus <- new_correlated_returns[, 1]
+    new_log_returns_safran <- new_correlated_returns[, 2]
+    
+    # Réinitialisation des prix de départ pour chaque simulation
+    price_airbus <- initial_price_airbus
+    price_safran <- initial_price_safran
+    
+    # Actualisation des prix sur 126 jours
+    for (i in 1:126) {
+      price_airbus <- price_airbus * exp(new_log_returns_airbus[i])
+      price_safran <- price_safran * exp(new_log_returns_safran[i])
+    }
+    
+    # Calcul du prix de l'option (put sur le maximum des deux)
+    prix_option <- max(0, K - max(price_airbus, price_safran))
+    liste_prix[k] <- prix_option
+  }
+  
+  # Retourne la moyenne des prix de l'option pour n simulations
+  return(mean(liste_prix))
+}
+
+# Liste des valeurs de n
+n_values <- seq(100, 1000, by=100)  
+mean_prices_normal <- sapply(n_values, monte_carlo_normal) 
+
+# Graphique de convergence 
+plot(n_values, mean_prices_normal, type="o", col="blue", 
+     xlab="Nombre de simulations (n)", ylab="Prix de l'option (non actualisé)",
+     main="Convergence du prix par simulation loi normale",
+     ylim=c(0, 15), 
+     cex=0.8) 
+```
+
+## Simulation Copule Student
+
+```{r, message=FALSE, warning=FALSE}
+# Définition de la copule de Student
+library(copula)
+copula_model <- tCopula(dim = 2, df = 4)
+fit <- fitCopula(copula_model, data = cbind(u, v), method = "ml")
+fitted_copula <- fit@copula  
+
+# Fonction de simulation Monte Carlo
+monte_carlo_copule <- function(n) {
+  # Liste pour stocker les prix des options
+  liste_prix <- numeric(n)
+  
+  # Boucle pour chaque simulation
+  for (k in 1:n) {
+    # Générer un échantillon de taille n à partir de la copule de Student ajustée
+    simulated_data <- rCopula(n, fitted_copula)
+    
+    new_log_returns_airbus <- unname(quantile(log_returns_airbus, probs = simulated_data[, 1], type = 8))
+    new_log_returns_safran <- unname(quantile(log_returns_safran, probs = simulated_data[, 2], type = 8))
+    
+    # Réinitialisation des prix de départ pour chaque simulation
+    price_airbus <- initial_price_airbus
+    price_safran <- initial_price_safran
+    
+    # Actualisation des prix sur 126 jours
+    for (i in 1:126) {
+      price_airbus <- price_airbus * exp(new_log_returns_airbus[i])
+      price_safran <- price_safran * exp(new_log_returns_safran[i])
+    }
+    
+    # Calcul du prix de l'option (put sur le maximum des deux)
+    prix_option <- max(0, K - max(price_airbus, price_safran))
+    liste_prix[k] <- prix_option
+  }
+  
+  # Retourne la moyenne des prix de l'option pour n simulations
+  return(mean(liste_prix))
+}
+
+# Liste des valeurs de n
+n_values <- seq(100, 1000, by = 100)
+mean_prices_copule <- sapply(n_values, monte_carlo_copule)
+
+# Graphique de convergence
+plot(n_values, mean_prices_copule, type = "o", col = "red", 
+     xlab = "Nombre de simulations (n)", ylab = "Prix de l'option (non actualisé)",
+     main = "Convergence du prix par simulation Copule",
+     ylim = c(0, 20), 
+     cex = 0.8)
+```
+
+<br>
+
+**Par curiosité je décide de tester la copule BB7**:
+```{r, message=FALSE, warning=FALSE}
+# Définition du strike
+K <- 100
+
+# Matrice des rendements
+log_returns_matrix <- cbind(log_returns_airbus, log_returns_safran)
+
+# Initialisation des prix de départ
+initial_price_airbus <- tail(df_airbus$clot, 1)
+initial_price_safran <- tail(df_safran$clot, 1)
+
+# Pseudo-observations
+u <- pobs(log_returns_airbus)
+v <- pobs(log_returns_safran)
+
+# Définition de la copule
+result <- BiCopSelect(u, v, familyset = NA, selectioncrit = "AIC", method = "mle")
+
+# Fonction de simulation Monte Carlo
+monte_carlo_copule <- function(n) {
+  # Liste pour stocker les prix des options
+  liste_prix <- numeric(n)
+  
+  # Boucle pour chaque simulation
+  for (k in 1:n) {
+    # Générer un échantillon de taille n à partir du copule BB7 et des paramètres estimés
+    simulated_data <- BiCopSim(n, result)
+    
+    new_log_returns_airbus <- unname(quantile(log_returns_airbus, probs = simulated_data[, 1], type = 8))
+    new_log_returns_safran <- unname(quantile(log_returns_safran, probs = simulated_data[, 2], type = 8))
+    
+    # Réinitialisation des prix de départ pour chaque simulation
+    price_airbus <- initial_price_airbus
+    price_safran <- initial_price_safran
+    
+    # Actualisation des prix sur 126 jours
+    for (i in 1:126) {
+      price_airbus <- price_airbus * exp(new_log_returns_airbus[i])
+      price_safran <- price_safran * exp(new_log_returns_safran[i])
+    }
+    
+    # Calcul du prix de l'option (put sur le maximum des deux)
+    prix_option <- max(0, K - max(price_airbus, price_safran))
+    liste_prix[k] <- prix_option
+  }
+  
+  # Retourne la moyenne des prix de l'option pour n simulations
+  return(mean(liste_prix))
+}
+
+# Liste des valeurs de n
+n_values <- seq(100, 1000, by=100)  
+mean_prices_bicop <- sapply(n_values, monte_carlo_normal) 
+
+# Graphique de convergence 
+plot(n_values, mean_prices_bicop, type="o", col="black", 
+     xlab="Nombre de simulations (n)", ylab="Prix de l'option (non actualisé)",
+     main="Convergence du prix par simulation Copule",
+     ylim=c(0, 15), 
+     cex=0.8) 
+```
+
+## Comparaison des méthodes 
+
+```{r, message=FALSE, warning=FALSE}
+# Graphe copule
+plot(n_values, mean_prices_copule, type="o", col="red", 
+     xlab="Nombre de simulations (n)", ylab="Prix de l'option (non actualisé)",
+     main="Comparaison simulation loi corrélation Pearson et corrélation Copule",
+     ylim=c(0, 20), 
+     cex=0.8)
+
+# graphe normal
+lines(n_values, mean_prices_normal, type="o", col="blue", cex=0.8)
+
+# Légende
+legend("topright", legend=c("Simulation Copule", "Simulation Pearson"), 
+       col=c("red", "blue"), lty=1, pch=1, cex=0.8)
+```
+
+
+# Conclusion
+
+Ce dernier résultat est très intéressant et il représente parfaitement l'intérêt des copules. 
+
+J'ai choisi de prendre un produit financier relativement sensible aux valeurs extrêmes négatives (car put) et corrélé (car min) avec un observation prise au cour d'une crise boursière. 
+
+En somme, lorsque l'on modélise correctement ces corrélations, qui ne sont pas perçues par la corrélation de Pearson, on obtient des crashs corrélés beaucoup plus souvent au cour des simulations et donc un prix final bien supérieur au prix estimé avec une méthode classique.
